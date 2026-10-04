@@ -1,0 +1,38 @@
+# Ambiente virtuale (~1.4 GB: non pubblicare mai)
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Log e processi
+*.log
+*.pid
+
+# Output generati dall'app
+*.wav
+*.mp3
+*.mp4
+*.srt
+
+# Cache e modelli
+.cache/
+*.pt
+*.safetensors
+
+# Segreti / configurazione locale
+.env
+.env.*
+
+# Editor e sistema operativo
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

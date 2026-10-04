@@ -1,0 +1,12 @@
+kokoro
+soundfile
+gradio
+moviepy
+edge-tts
+transformers
+sentencepiece
+sacremoses
+ordered_set
+pypinyin
+cn2an
+jieba
