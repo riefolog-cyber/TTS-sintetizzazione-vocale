@@ -14,6 +14,7 @@ Versione corrente: **3.3**
 - **Traduzione automatica** prima della sintesi, gratuita e privata
 - **Video MP4** con sottotitoli incisi + file **SRT** + immagine di sfondo personalizzabile
 - **Lettore karaoke**: il testo viene **evidenziato frase per frase** mentre l'audio suona
+- **Cronologia persistente**: le ultime 30 generazioni con riproduzione, download e ricarica dei parametri
 - **Controllo di tono**: velocità, pitch (altezza) e volume
 - **Qualità audio**: loudness normalizzato a −16 LUFS (standard dei servizi cloud)
 - **Nessun limite di caratteri** (verificato oltre 6.000 caratteri)
@@ -120,6 +121,27 @@ al primo avvio verranno riscaricati (~3 GB).
 8. **🔊 Anteprima** — prova la voce prima di generare.
 9. **Genera** — scegli **Audio** o **Video**.
 10. **🔤 Testo pronunciato** — ascolta con l'evidenziazione sincronizzata.
+
+---
+
+## 🕘 Cronologia
+
+Ogni generazione viene **salvata automaticamente** e sopravvive al riavvio
+dell'app.
+
+- Sono conservate le **ultime 30 generazioni**; le più vecchie e i relativi
+  file vengono eliminati automaticamente.
+- I file generati sono copiati nella cartella **`output/`**, così restano
+  disponibili anche dopo aver chiuso l'app.
+- Per ogni voce puoi: **riprodurre** l'audio, **scaricare** il file (audio o
+  video) e **ricaricare i parametri** (testo, voce, motore, lingua, velocità,
+  tono, volume) per rigenerare o modificarlo.
+- Vengono memorizzati sia il testo **originale** sia quello **effettivamente
+  letto**, così sai sempre cosa è stato tradotto.
+
+> Su audio molto grandi (> 6 MB) il player sincronizzato mostra **solo il testo**
+> con un avviso: incorporare file enormi nella pagina la bloccherebbe. Per
+> ascoltare usa il lettore audio qui sopra, che resta sempre disponibile.
 
 ---
 
@@ -232,6 +254,8 @@ installa.bat       installazione (Windows)
 avvia.bat          avvio (Windows)
 installa.sh        installazione (Linux / macOS)
 avvia.sh           avvio (Linux / macOS)
+output/            file generati conservati dalla cronologia
+history.json       cronologia (non pubblicata)
 .venv/             ambiente virtuale Python 3.11 x64
 server.log         log del server
 server_err.log     errori del server

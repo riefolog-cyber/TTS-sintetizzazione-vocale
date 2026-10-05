@@ -21,6 +21,11 @@ __pycache__/
 *.mp4
 *.srt
 
+# Cronologia e file conservati (locali, non pubblicare)
+history.json
+history.tmp
+output/
+
 # Cache e modelli
 .cache/
 *.pt

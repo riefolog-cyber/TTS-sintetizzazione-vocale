@@ -3,13 +3,14 @@ Kokoro TTS Italiano — Audio & Video con sottotitoli
 Sintesi vocale italiana + video MP4 con sottotitoli sincronizzati.
 """
 
-__version__ = "3.4"  # v3.4: rendering 3.5x piu' veloce, Kokoro caricato in modo pigro, lock
+__version__ = "3.5"  # v3.5: cronologia persistente + limite dimensione player
 
 # ── Imports ──────────────────────────────────────────────────────────────────
 import os
 import re
 import tempfile
 import atexit
+import shutil
 import subprocess
 import time
 import bisect
@@ -391,6 +392,165 @@ def _cleanup_old_temps(max_age_seconds: int = 3600):
                 _TEMP_FILES.remove(p)
         except OSError:
             pass
+
+# ── Cronologia (persistente) ─────────────────────────────────────────────────
+_APP_DIR = Path(__file__).resolve().parent
+_HISTORY_FILE = _APP_DIR / "history.json"
+_OUTPUT_DIR = _APP_DIR / "output"
+_HISTORY_MAX = 30
+_history: list = []
+_history_lock = threading.Lock()
+
+
+def _load_history():
+    global _history
+    try:
+        if _HISTORY_FILE.exists():
+            data = json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                _history = [e for e in data if isinstance(e, dict) and "id" in e]
+    except Exception:  # noqa: BLE001
+        _history = []
+    return _history
+
+
+def _save_history():
+    """Scrive la cronologia in modo atomico (evita file corrotti)."""
+    try:
+        tmp = _HISTORY_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_history, ensure_ascii=False, indent=1),
+                       encoding="utf-8")
+        tmp.replace(_HISTORY_FILE)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _keep_file(src: str, ext: str, entry_id: str) -> str:
+    """Copia il file in output/ cosi' sopravvive al riavvio dell'app."""
+    if not src or not os.path.exists(src):
+        return ""
+    try:
+        _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        dest = _OUTPUT_DIR / f"{entry_id}.{ext}"
+        shutil.copyfile(src, dest)
+        return str(dest)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _drop_entry_files(entry: dict):
+    for k in ("audio", "video"):
+        p = entry.get(k)
+        if p:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def add_history(entry: dict):
+    """Inserisce in cima e pota la cronologia, cancellando i file in eccesso."""
+    with _history_lock:
+        _history.insert(0, entry)
+        while len(_history) > _HISTORY_MAX:
+            _drop_entry_files(_history.pop())
+        _save_history()
+
+
+def _hist_label(e: dict) -> str:
+    quando = e.get("created", "?")
+    voce = e.get("voice_label") or e.get("voice", "?")
+    testo = (e.get("spoken") or e.get("text", "")).replace("\n", " ")[:40]
+    return f"{quando} · {voce} · {testo}"
+
+
+def history_choices():
+    with _history_lock:
+        return [(_hist_label(e), e["id"]) for e in _history]
+
+
+def history_get(entry_id):
+    if not entry_id:
+        return None
+    with _history_lock:
+        for e in _history:
+            if e.get("id") == entry_id:
+                return e
+    return None
+
+
+def history_select(entry_id):
+    """Restituisce (audio, descrizione) per la voce selezionata."""
+    e = history_get(entry_id)
+    if not e:
+        return None, ""
+    audio = e.get("audio") or ""
+    if audio and not os.path.exists(audio):
+        audio = ""
+    orig = (e.get("text") or "").strip()
+    letto = (e.get("spoken") or "").strip()
+    parti = [
+        f"**{e.get('created', '')}** · motore **{e.get('engine', '')}** · "
+        f"voce **{e.get('voice_label', e.get('voice', ''))}** · "
+        f"lingua **{e.get('lang', '')}** · {e.get('duration', 0):.1f} s",
+    ]
+    if orig and letto and orig != letto:
+        parti.append(f"\n**Originale:** {orig[:300]}")
+        parti.append(f"\n**Letto ({e.get('lang')}):** {letto[:300]}")
+    else:
+        parti.append(f"\n{letto[:400] or orig[:400]}")
+    if e.get("video"):
+        parti.append(f"\n📹 Video salvato: `{Path(e['video']).name}`")
+    return (audio or None), "\n".join(parti)
+
+
+def history_download(entry_id):
+    e = history_get(entry_id)
+    if not e:
+        return None
+    return e.get("video") or e.get("audio") or None
+
+
+def history_reuse(entry_id):
+    """Ricarica i parametri di una generazione nei controlli."""
+    e = history_get(entry_id)
+    if not e:
+        return [gr.update() for _ in range(9)]
+    return [
+        e.get("text", ""),
+        e.get("voice"),
+        float(e.get("speed", 1.0)),
+        e.get("engine", "edge"),
+        e.get("lang", "it"),
+        e.get("src", "it"),
+        bool(e.get("src") and e.get("lang") and e["src"] != e["lang"]),
+        float(e.get("pitch", 0.0)),
+        float(e.get("volume", 0.0)),
+    ]
+
+
+def history_delete(entry_id):
+    with _history_lock:
+        for i, e in enumerate(_history):
+            if e.get("id") == entry_id:
+                _drop_entry_files(e)
+                _history.pop(i)
+                break
+        _save_history()
+    return gr.update(choices=history_choices(), value=None)
+
+
+def history_clear():
+    with _history_lock:
+        for e in _history:
+            _drop_entry_files(e)
+        _history.clear()
+        _save_history()
+    return gr.update(choices=[], value=None), None, ""
+
+
+_load_history()
+
 
 # ── Helper functions ─────────────────────────────────────────────────────────
 def _normalize(text: str) -> str:
@@ -885,6 +1045,25 @@ def _audio_to_b64(path: str, bitrate: str = "64k") -> str:
         return base64.b64encode(f.read()).decode()
 
 
+# Oltre questa dimensione (base64) il player viene mostrato solo come testo:
+# incorporare audio molto grandi nella pagina la bloccherebbe.
+_PLAYER_MAX_B64 = 6 * 1024 * 1024
+
+
+def _player_text_block(segments: list, nota: str = "") -> str:
+    """Sezione solo testo, senza player audio (per audio troppo grandi)."""
+    spans = "".join(
+        f"<span data-i='{i}'>{_html_escape(t)}</span> "
+        for i, (t, _s, _e) in enumerate(segments)
+    )
+    avviso = (
+        f"<div style='font-size:0.85rem;color:#94a3b8;margin-bottom:6px'>"
+        f"{_html_escape(nota)}</div>" if nota else ""
+    )
+    return (f"<div class='kokoro-player'>{avviso}"
+            f"<div class='kokoro-transcript'>{spans}</div></div>")
+
+
 def _build_player_html(segments: list, audio_path: str):
     """Costruisce il lettore con testo evidenziato in sincrono con l'audio."""
     if not segments or not audio_path or not os.path.exists(audio_path):
@@ -892,7 +1071,14 @@ def _build_player_html(segments: list, audio_path: str):
     try:
         b64 = _audio_to_b64(audio_path)
     except Exception:  # noqa: BLE001
-        return ""
+        return _player_text_block(segments, "Player non disponibile.")
+    if len(b64) > _PLAYER_MAX_B64:
+        return _player_text_block(
+            segments,
+            f"Audio di {len(b64) / (1024 * 1024):.1f} MB: troppo grande per il "
+            f"player sincronizzato. Usalo dal lettore qui sopra; il testo e' "
+            f"comunque qui sotto.",
+        )
     seg_json = json.dumps([{"s": round(s, 3), "e": round(e, 3)} for _t, s, e in segments])
     spans = "".join(
         f"<span data-i='{i}'>{_html_escape(t)}</span> "
@@ -1175,6 +1361,29 @@ def update_stats(text: str, speed: float) -> str:
         time_str = f"{m}min {s}s"
     return f"📝 **{n}** caratteri &nbsp;·&nbsp; 📄 **{n_sents}** frasi &nbsp;·&nbsp; ⏱ **~{time_str}**"
 
+def _new_entry_id() -> str:
+    return time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 100000:05d}"
+
+
+def _register_history(entry_id, original, spoken, voice, engine, lang, src,
+                      speed, pitch, volume, fmt, audio_path="",
+                      video_path="", duration=0.0):
+    """Salva una voce di cronologia, copiando i file nella cartella output/."""
+    voce = next((l for l, v in _ALL_VOICES if v == voice), voice)
+    ext = Path(audio_path).suffix.lstrip(".") or "wav" if audio_path else "wav"
+    add_history({
+        "id": entry_id,
+        "created": time.strftime("%d/%m/%Y %H:%M:%S"),
+        "engine": engine, "lang": lang, "src": src,
+        "voice": voice, "voice_label": voce,
+        "speed": float(speed), "pitch": float(pitch), "volume": float(volume),
+        "fmt": fmt, "duration": float(duration),
+        "text": original or "", "spoken": spoken or "",
+        "audio": _keep_file(audio_path, ext, entry_id),
+        "video": _keep_file(video_path, "mp4", entry_id) if video_path else "",
+    })
+
+
 # ── Handler ──────────────────────────────────────────────────────────────────
 def handle_generate(text, voice, speed, fmt, audio_fmt, bg_image,
                     video_quality, sub_font_size, sub_text_color, sub_bg_opacity,
@@ -1189,6 +1398,7 @@ def handle_generate(text, voice, speed, fmt, audio_fmt, bg_image,
         raise gr.Error(f"Lingua non supportata: {lang}")
     if voice not in valid:
         voice = valid[0]
+    original_text = text
     if translate and text.strip() and src != lang:
         try:
             text = translate_text(text, src, lang)
@@ -1198,6 +1408,11 @@ def handle_generate(text, voice, speed, fmt, audio_fmt, bg_image,
         path, segments = generate_audio(text, voice, speed, audio_fmt, device,
                                        engine, pitch, volume)
         player = _build_player_html(segments, path)
+        _register_history(
+            _new_entry_id(), original_text, text, voice, engine, lang, src,
+            speed, pitch, volume, "audio", audio_path=path,
+            duration=segments[-1][2] if segments else 0.0,
+        )
         return (gr.update(value=path, visible=True),        # audio_out
                 gr.update(value=None, visible=False),       # video_out
                 gr.update(value=None, visible=False),       # srt_out
@@ -1211,6 +1426,12 @@ def handle_generate(text, voice, speed, fmt, audio_fmt, bg_image,
             device, engine, pitch, volume,
         )
         player = _build_player_html(segments, wav_path)
+        _register_history(
+            _new_entry_id(), original_text, text, voice, engine, lang, src,
+            speed, pitch, volume, "video", audio_path=wav_path,
+            video_path=video_path,
+            duration=segments[-1][2] if segments else 0.0,
+        )
         return (gr.update(value=None, visible=False),                      # audio_out
                 gr.update(value=video_path, visible=True),                 # video_out
                 gr.update(value=srt_path, visible=srt_path is not None),   # srt_out
@@ -1333,6 +1554,20 @@ with gr.Blocks(title="Sintesi Vocale Multilingua", head=_HEAD_HTML) as demo:
             wav_out = gr.Audio(label="Audio (WAV)", interactive=False, visible=False)
             with gr.Accordion("🔤 Testo pronunciato (evidenziato in sincrono)", open=True):
                 player_out = gr.HTML()
+            with gr.Accordion("🕘 Cronologia", open=False):
+                hist_dd = gr.Dropdown(
+                    choices=history_choices(), value=None,
+                    label=f"Generazioni salvate (ultime {_HISTORY_MAX})",
+                )
+                hist_info = gr.Markdown("")
+                hist_audio = gr.Audio(label="Audio registrato", interactive=False)
+                with gr.Row():
+                    b_reuse = gr.Button("♻ Ricarica parametri", size="sm")
+                    b_dl = gr.Button("⬇ Scarica", size="sm")
+                    b_del = gr.Button("🗑 Elimina", size="sm", variant="secondary")
+                b_clear = gr.Button("🧹 Svuota cronologia", size="sm",
+                                    variant="secondary")
+                hist_file = gr.File(label="", visible=False)
             with gr.Accordion("Info", open=False):
                 gr.Markdown(f"""
                 **Lingue:** {' · '.join(_LANG_LABELS.values())} (9)
@@ -1370,11 +1605,33 @@ with gr.Blocks(title="Sintesi Vocale Multilingua", head=_HEAD_HTML) as demo:
     gen_btn.click(
         fn=handle_generate, inputs=gen_inputs,
         outputs=[audio_out, video_out, srt_out, wav_out, preview_audio, player_out],
-    ).then(fn=None, js="() => window.kokoroSetup && window.kokoroSetup()")
+    ).then(
+        fn=lambda: gr.update(choices=history_choices()), outputs=[hist_dd],
+    ).then(
+        fn=None, js="() => window.kokoroSetup && window.kokoroSetup()",
+    )
     text_in.submit(
         fn=handle_generate, inputs=gen_inputs,
         outputs=[audio_out, video_out, srt_out, wav_out, preview_audio, player_out],
-    ).then(fn=None, js="() => window.kokoroSetup && window.kokoroSetup()")
+    ).then(
+        fn=lambda: gr.update(choices=history_choices()), outputs=[hist_dd],
+    ).then(
+        fn=None, js="() => window.kokoroSetup && window.kokoroSetup()",
+    )
+
+    # --- Cronologia ---
+    hist_dd.change(fn=history_select, inputs=[hist_dd],
+                   outputs=[hist_audio, hist_info])
+    b_reuse.click(
+        fn=history_reuse, inputs=[hist_dd],
+        outputs=[text_in, voice_r, speed_r, engine_r, lang_r, src_r,
+                 translate_cb, pitch_r, volume_r],
+    )
+    b_dl.click(fn=history_download, inputs=[hist_dd], outputs=[hist_file])
+    b_del.click(fn=history_delete, inputs=[hist_dd], outputs=[hist_dd]).then(
+        fn=lambda: (None, ""), outputs=[hist_audio, hist_info],
+    )
+    b_clear.click(fn=history_clear, outputs=[hist_dd, hist_audio, hist_info])
     fmt_r.change(
         fn=toggle_output, inputs=fmt_r,
         outputs=[audio_out, video_out, srt_out, wav_out,
