@@ -212,6 +212,19 @@ for _eng_name, _table in (("Edge", _EDGE_VOICES), ("Kokoro", _KOKORO_VOICES)):
         for _lbl, _vid in _table.get(_lg, []):
             _ALL_VOICES.append((f"{_lbl} · {_lname} · {_eng_name}", _vid))
 
+# Mappa voce -> lingua: usata per caricare la pipeline Kokoro GIUSTA per la
+# voce scelta (prima veniva sempre usata la lingua italiana, anche per voci
+# inglesi/francesi/etc.: fonema e prosodia errati).
+_VOICE_LANG: dict = {}
+for _table in (_EDGE_VOICES, _KOKORO_VOICES):
+    for _lg, _lst in _table.items():
+        for _lbl, _vid in _lst:
+            _VOICE_LANG.setdefault(_vid, _lg)
+_KOKORO_LANG: dict = {
+    _vid: _lg for _lg, _lst in _KOKORO_VOICES.items()
+    for _lbl, _vid in _lst
+}
+
 
 # ── Pipeline management (Kokoro, per lingua e device) ────────────────────────
 _pipelines: dict = {}
@@ -573,6 +586,19 @@ def _make_gradient(bg_top: tuple, bg_bottom: tuple,
         draw.line([(0, y), (W, y)], fill=(r, g, b))
     return img
 
+
+_gradient_cache: dict = {}
+
+
+def _get_gradient(palette: tuple) -> Image.Image:
+    """Gradiente precomputato e condiviso: le varianti sono fisse, non ha
+    senso ricalcolarle a ogni generazione video."""
+    img = _gradient_cache.get(palette)
+    if img is None:
+        img = _make_gradient(palette[0], palette[1])
+        _gradient_cache[palette] = img
+    return img
+
 def _parse_color(hex_color: str) -> tuple[int, int, int, int]:
     """Converte un colore hex in tuple RGBA."""
     if not hex_color:
@@ -695,6 +721,8 @@ def _run_async(coro):
 
 def _decode_to_pcm(path: str) -> np.ndarray:
     """Decodifica un file audio in PCM numpy float32 mono a SAMPLE_RATE."""
+    if not _has_ffmpeg:
+        raise gr.Error("ffmpeg non trovato nel PATH: installalo per usare il motore Edge TTS.")
     cmd = ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le",
            "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(SAMPLE_RATE), "pipe:1"]
     r = subprocess.run(cmd, capture_output=True, timeout=300)
@@ -727,6 +755,8 @@ def _edge_synthesize(text: str, voice: str, speed: float,
     pitch_hz = int(round(pitch))
     volume_pct = int(round(volume))
     mp3_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+    # Registrato subito: se la sintesi fallisce il file non resta orfano su disco.
+    _TEMP_FILES.append(mp3_path)
     segments: list = []
 
     async def _run():
@@ -748,14 +778,14 @@ def _edge_synthesize(text: str, voice: str, speed: float,
                     segments.append((chunk["text"], st, en))
 
     _run_async(_run())
-    _TEMP_FILES.append(mp3_path)
     audio = _decode_to_pcm(mp3_path)
     return audio, segments
 
 
 def _kokoro_synthesize(text: str, voice: str, speed: float, device: str, progress=None):
     """Sintesi con Kokoro (offline). Ritorna (audio float32, segmenti)."""
-    pipe = get_pipeline(device)
+    # Pipeline corretta per la lingua della voce (non sempre "it").
+    pipe = get_pipeline(device, _KOKORO_LANG.get(voice, "it"))
     clean = _normalize(text)
     sentences = [s for s in re.split(r'(?<=[.!?])\s+', clean) if s.strip()]
     n_est = max(1, len(sentences))
@@ -1135,6 +1165,8 @@ def generate_video(
     """Ritorna (video_path, srt_path, wav_path, segmenti)."""
     if not text.strip():
         raise gr.Error("Inserisci del testo.")
+    if not _has_ffmpeg:
+        raise gr.Error("ffmpeg non trovato nel PATH: non posso creare il video (serve anche per l'audio del motore Edge).")
 
     try:
         _cleanup_old_temps()
@@ -1165,7 +1197,7 @@ def generate_video(
             bg_precomputed.paste(bg_pil, (0, 0))
             bar_color = (15, 15, 25, sub_bg_opacity)
         else:
-            bg_precomputed = _make_gradient(palette[0], palette[1])
+            bg_precomputed = _get_gradient(palette)
             bar_color = (0, 0, 0, sub_bg_opacity)
 
         # Font e colori sottotitoli
@@ -1195,8 +1227,12 @@ def generate_video(
 
         def make_frame(t):
             active = bisect.bisect_right(starts, t) - 1
-            if active < 0 or active >= len(times):
-                active = -1      # fuori intervallo: nessun sottotitolo
+            # Fuori intervallo oppure oltre la fine della frase: nessun
+            # sottotitolo (prima l'ultima frase restava visibile fino alla
+            # fine del video, anche nei silenzi).
+            if (active < 0 or active >= len(times)
+                    or t >= times[active][1]):
+                active = -1
             return _compose_frame(bg_precomputed, _get_overlay(active))
 
         # Scrivi WAV intermedio (int16, 24000 Hz)
@@ -1291,6 +1327,8 @@ def generate_audio(
         wav_path = _apply_gain(wav_path, volume)
 
         if audio_fmt == "mp3":
+            if not _has_ffmpeg:
+                raise gr.Error("ffmpeg non trovato nel PATH: non posso convertire in MP3.")
             progress(0.9, desc="Conversione MP3...")
             mp3_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
             result = subprocess.run([
@@ -1319,8 +1357,16 @@ def generate_preview(voice: str, text: str = "", device: str = "auto",
                      volume: float = 0.0) -> str:
     """Genera un breve sample audio di anteprima."""
     try:
+        _cleanup_old_temps()
         # Usa le prime ~100 caratteri del testo utente, o fallback default
         preview_text = text.strip()[:100] if text.strip() else "Ciao, questa è un'anteprima vocale."
+
+        # Voce coerente con il motore: con Kokoro non e' possibile usare una
+        # voce Edge (altrimenti l'anteprima fallisce con un id inesistente).
+        if engine == "kokoro" and voice not in _KOKORO_LANG:
+            lg = _VOICE_LANG.get(voice, "it")
+            vs = voices_for("kokoro", lg) or voices_for("kokoro", "it")
+            voice = vs[0][1]
 
         # Cache solo per anteprima default
         if not text.strip():
@@ -1483,7 +1529,7 @@ if _has_cuda:
 _device_options.append(("CPU", "cpu"))
 
 # ── UI ───────────────────────────────────────────────────────────────────────
-with gr.Blocks(title="Sintesi Vocale Multilingua", head=_HEAD_HTML) as demo:
+with gr.Blocks(title="Sintesi Vocale Multilingua") as demo:
     gr.Markdown("""
     # Sintesi Vocale Multilingua (Kokoro + Microsoft Edge)
     Genera audio o video con sottotitoli sincronizzati, in **italiano** o **inglese**, con **traduzione automatica**.
@@ -1666,4 +1712,4 @@ with gr.Blocks(title="Sintesi Vocale Multilingua", head=_HEAD_HTML) as demo:
 
 if __name__ == "__main__":
     print(f"\n=== Kokoro TTS - Audio & Video v{__version__} ===\nApri: http://localhost:8885\n")
-    demo.launch(server_name="127.0.0.1", server_port=8885, share=False, theme=gr.themes.Soft())
+    demo.launch(server_name="127.0.0.1", server_port=8885, share=False, theme=gr.themes.Soft(), head=_HEAD_HTML)
