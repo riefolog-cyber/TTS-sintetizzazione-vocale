@@ -246,14 +246,25 @@ non influiscono sul funzionamento.
 
 ---
 
-## 📄 Licenza e crediti
+## 📄 Licenza
+
+> **Nessuna licenza concessa — tutti i diritti riservati.**
+>
+> Questo codice **non è open source**. Senza una licenza esplicita non è
+> legalmente riutilizzabile da terzi: puoi consultarlo e farlo funzionare per
+> uso personale, ma **non** è concesso di copiarlo, modificarlo, ridistribuirlo
+> o usarlo per scopi commerciali.
+
+## 🙏 Crediti
+
+I componenti di terze parti restano sotto la **propria** licenza originale:
 
 - Modello vocale: [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — Apache 2.0
-- Traduzione: [Helsinki-NLP MarianMT](https://huggingface.co/Helsinki-NLP) e [facebook/NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M)
+- Traduzione: [Helsinki-NLP MarianMT](https://huggingface.co/Helsinki-NLP) e [facebook/NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M) — CC-BY-NC 4.0
 - Sintesi online: Microsoft Edge TTS
-- Video: MoviePy · immagini: Pillow · interfaccia: Gradio
+- Video: MoviePy · immagini: Pillow · interfaccia: Gradio · sintesi offline: Kokoro
 
-Tutti i componenti sono **gratuiti**.
+Tutti i componenti utilizzati sono **gratuiti**.
 
 Per chiudere: terminare il processo Python (oppure chiudere la finestra di
 console). I log sono in `server.log` e `server_err.log`.
