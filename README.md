@@ -25,9 +25,11 @@ Versione corrente: **3.3**
 
 | Componente | Requisito | Note |
 |---|---|---|
-| **Python** | 3.11 **a 64 bit (x64)** | Vedi nota Windows ARM qui sotto |
+| **Python** | 3.10 o 3.11 (64 bit) | Su Windows ARM serve la versione **x64** |
 | **ffmpeg** | nel PATH | Serve per video, MP3 e normalizzazione |
 | **Node.js** | non richiesto | — |
+
+Funziona su **Windows, Linux e macOS**, sia su PC Intel/AMD sia Apple Silicon.
 
 > ### ⚠️ Nota importante: Windows su ARM (Snapdragon)
 > Il Python "predefinito" su questi PC è spesso **ARM64**, e **PyTorch non esiste
@@ -64,11 +66,47 @@ py -3.11 -m venv .venv
 
 ## ▶️ Avvio
 
-Doppio clic su **`avvia.bat`**, poi apri il browser su:
+**Windows** — doppio clic su **`avvia.bat`**
+**Linux / macOS** — esegui **`./avvia.sh`**
+
+Poi apri il browser su:
 
 ```
 http://localhost:8885
 ```
+
+### Linux e macOS
+
+```bash
+chmod +x installa.sh avvia.sh
+./installa.sh
+```
+
+Lo script crea l'ambiente, installa le dipendenze e ti avvisa se manca
+`ffmpeg`. Su Debian/Ubuntu per la sintesi offline con Kokoro serve anche:
+
+```bash
+sudo apt install ffmpeg espeak-ng
+```
+
+Per chiudere: terminare il processo Python (oppure `Ctrl+C` se avviato da
+terminale). I log sono in `server.log` e `server_err.log`.
+
+### Clonare su un altro PC
+
+```bash
+git clone <url-del-repository>
+cd sintesi-vocale-multilingua
+```
+
+Poi esegui l'installazione per il tuo sistema (`installa.bat` o `./installa.sh`).
+L'ambiente `.venv` e i modelli **non** sono nel repository e vengono ricreati:
+al primo avvio verranno riscaricati (~3 GB).
+
+> Il font dei sottotitoli viene cercato automaticamente su Windows, Linux e
+> macOS: nessun percorso è legato a un sistema operativo specifico.
+
+---
 
 ## 📖 Guida all'uso
 
@@ -174,8 +212,10 @@ Per una generazione **interamente in locale**: scegli il motore **Kokoro**.
 kokoro_app.py      applicazione (unico file Python)
 README.md          questa guida
 requirements.txt   dipendenze
-installa.bat       installazione ambiente + dipendenze
-avvia.bat          avvio dell'applicazione
+installa.bat       installazione (Windows)
+avvia.bat          avvio (Windows)
+installa.sh        installazione (Linux / macOS)
+avvia.sh           avvio (Linux / macOS)
 .venv/             ambiente virtuale Python 3.11 x64
 server.log         log del server
 server_err.log     errori del server

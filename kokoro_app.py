@@ -256,10 +256,28 @@ from PIL import Image, ImageDraw, ImageFont
 # ── Font cache ───────────────────────────────────────────────────────────────
 _font_cache: dict = {}
 
+# Font per i sottotitoli: proviamo Windows, Linux e macOS.
+_FONT_CANDIDATES = [
+    # Windows
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/calibri.ttf",
+    # Linux (Debian/Ubuntu, Fedora, Arch)
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/Library/Fonts/Arial.ttf",
+]
+
+
 def _get_font(size: int):
-    """Restituisce un font della dimensione specificata (con cache)."""
+    """Font della dimensione richiesta, con cache e fallback cross-platform."""
     if size not in _font_cache:
-        for f in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/segoeui.ttf"]:
+        for f in _FONT_CANDIDATES:
             if os.path.exists(f):
                 try:
                     _font_cache[size] = ImageFont.truetype(f, size)
@@ -267,7 +285,11 @@ def _get_font(size: int):
                 except Exception:
                     pass
         if size not in _font_cache:
-            _font_cache[size] = ImageFont.load_default()
+            try:
+                # Pillow >= 10.1: il font predefinito accetta la dimensione
+                _font_cache[size] = ImageFont.load_default(size)
+            except TypeError:
+                _font_cache[size] = ImageFont.load_default()
     return _font_cache[size]
 
 # ── Aggiornamenti ────────────────────────────────────────────────────────────
