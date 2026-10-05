@@ -2,7 +2,7 @@
 
 Applicazione web locale per generare **audio** e **video con sottotitoli** in
 **9 lingue**, con **traduzione automatica** e **lettore karaoke sincronizzato**.
-Versione corrente: **3.3**
+Versione corrente: **3.5**
 
 ---
 
@@ -70,11 +70,17 @@ py -3.11 -m venv .venv
 **Windows** — doppio clic su **`avvia.bat`**
 **Linux / macOS** — esegui **`./avvia.sh`**
 
-Poi apri il browser su:
+Entrambi gli script:
 
-```
-http://localhost:8885
-```
+- **liberano la porta 8885** da un'istanza precedente dell'app (puoi
+  rilanciarli senza chiudere nulla a mano);
+- avviano il server e **aprono il browser** su `http://localhost:8885`
+  appena il server è pronto;
+- salvano il PID del processo in `server.pid`.
+
+Su Windows l'app gira nella finestra di console **"Kokoro TTS - console"**
+(dove scorrono i log), su Linux/macOS nel terminale. **Chiudi quella finestra
+per fermare l'app** (oppure `Ctrl+C` se avviata da terminale).
 
 ### Linux e macOS
 
@@ -91,7 +97,8 @@ sudo apt install ffmpeg espeak-ng
 ```
 
 Per chiudere: terminare il processo Python (oppure `Ctrl+C` se avviato da
-terminale). I log sono in `server.log` e `server_err.log`.
+terminale). I log scorrono nel terminale; `server.log` e `server_err.log`
+vengono usati solo se avvii il server manualmente con ridirezione.
 
 ### Clonare su un altro PC
 
@@ -205,7 +212,7 @@ Qualità video: **Veloce** (ultrafast 1,5M) · **Bilanciato** (medium 3M) · **A
 
 ## ⏱️ Limiti
 
-- **Nessun limite di caratteri** imposed dall'app (verificato fino a 6.000+).
+- **Nessun limite di caratteri** imposti dall'app (verificato fino a 6.000+).
 - Tempi indicativi su CPU (nessuna GPU richiesta):
   - Edge: ~40 s per 6.000 caratteri
   - Kokoro: ~21 s per 1.000 caratteri
@@ -257,8 +264,8 @@ avvia.sh           avvio (Linux / macOS)
 output/            file generati conservati dalla cronologia
 history.json       cronologia (non pubblicata)
 .venv/             ambiente virtuale Python 3.11 x64
-server.log         log del server
-server_err.log     errori del server
+server.log         log del server (solo avvii manuali con ridirezione)
+server_err.log     errori del server (solo avvii manuali con ridirezione)
 server.pid         PID del processo attivo
 ```
 
@@ -286,6 +293,24 @@ non influiscono sul funzionamento.
 
 ---
 
+## 🧭 Novità recenti
+
+- **v3.5** — cronologia persistente (riproduci/scarica/ricarica) e player con
+  limite di dimensione.
+- **v3.5 (fix)** — ogni voce Kokoro usa la pipeline della **propria lingua**
+  (prima veniva sempre usata quella italiana); compatibilità **Gradio 6**
+  (`head` spostato in `launch`); il sottotitolo sparisce nei silenzi; errori
+  chiari se manca ffmpeg; pulizia dei file temporanei delle anteprime;
+  gradienti di sfondo cachati.
+- **Lanciatori** — `avvia.bat` **e** `avvia.sh` liberano la porta 8885,
+  aprono il browser al pronto e salvano il PID in `server.pid`.
+- **Dipendenze** — `requirements.txt` con versioni **fissate** sull'ambiente
+  verificato (Python 3.11 x64).
+- **v3.4** — cache dei layer sottotitoli (rendering video ~3,5× più veloce),
+  Kokoro caricato pigro, lock sui modelli.
+
+---
+
 ## 📄 Licenza
 
 > **Nessuna licenza concessa — tutti i diritti riservati.**
@@ -306,7 +331,8 @@ I componenti di terze parti restano sotto la **propria** licenza originale:
 
 Tutti i componenti utilizzati sono **gratuiti**.
 
-Per chiudere: terminare il processo Python (oppure chiudere la finestra di
-console). I log sono in `server.log` e `server_err.log`.
+Per chiudere: chiudi la finestra di console (Windows) oppure usa `Ctrl+C` nel
+terminale. I log scorrono lì; `server.log` e `server_err.log` sono usati solo
+se avvii il server manualmente con ridirezione.
 
 ---

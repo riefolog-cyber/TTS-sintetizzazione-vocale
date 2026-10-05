@@ -34,6 +34,9 @@ pause
 exit /b 1
 
 :apri
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":8885" ^| findstr "LISTENING"') do (
+    >server.pid echo %%P
+)
 echo Server pronto: apro http://localhost:8885
 start "" http://localhost:8885
 exit /b 0

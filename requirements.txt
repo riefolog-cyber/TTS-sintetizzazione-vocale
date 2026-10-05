@@ -1,12 +1,13 @@
-kokoro
-soundfile
-gradio
-moviepy
-edge-tts
-transformers
-sentencepiece
-sacremoses
-ordered_set
-pypinyin
-cn2an
-jieba
+# Versioni verificate con l'ambiente .venv (Python 3.11 x64) — 05/10/2026
+kokoro==0.9.4
+soundfile==0.14.0
+gradio==6.29.1
+moviepy==2.2.1
+edge-tts==7.2.8
+transformers==5.18.0
+sentencepiece==0.2.2
+sacremoses==0.2.0
+ordered_set==4.1.0
+pypinyin==0.55.0
+cn2an==0.5.24
+jieba==0.42.1
