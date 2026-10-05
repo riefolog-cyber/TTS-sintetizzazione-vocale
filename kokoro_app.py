@@ -3,7 +3,7 @@ Kokoro TTS Italiano — Audio & Video con sottotitoli
 Sintesi vocale italiana + video MP4 con sottotitoli sincronizzati.
 """
 
-__version__ = "3.3"  # v3.3: 9 lingue + controllo tono/pitch e volume
+__version__ = "3.4"  # v3.4: rendering 3.5x piu' veloce, Kokoro caricato in modo pigro, lock
 
 # ── Imports ──────────────────────────────────────────────────────────────────
 import os
@@ -42,6 +42,15 @@ _QUALITY_PRESETS = {
     "high":     {"preset": "slow",      "bitrate": "5000k", "label": "Alta"},
 }
 
+# Sfondi a gradiente usati quando non si carica un'immagine.
+# (dal colore in alto al colore in basso)
+_GRADIENTS = (
+    ((18, 28, 48), (38, 58, 96)),     # blu
+    ((30, 38, 30), (52, 70, 52)),     # verde
+    ((42, 24, 48), (78, 44, 84)),     # viola
+    ((48, 30, 22), (88, 56, 36)),     # ambra
+)
+
 _MODIFIED = time.strftime("%d/%m/%Y %H:%M", time.localtime(os.path.getmtime(__file__)))
 
 # ── Fix espeak-ng ────────────────────────────────────────────────────────────
@@ -76,16 +85,10 @@ _has_ffmpeg = _check_ffmpeg()
 if not _has_ffmpeg:
     print("ATTENZIONE: ffmpeg non trovato nel PATH. Video e MP3 non saranno disponibili.")
 
-# ── Inizializzazione pipeline ────────────────────────────────────────────────
-print("Inizializzazione Kokoro TTS...", flush=True)
-try:
-    _initial_pipeline = KPipeline(
-        lang_code="i", repo_id="hexgrad/Kokoro-82M",
-        device="cuda" if _has_cuda else "cpu",
-    )
-except TypeError:
-    # KPipeline non supporta il parametro device
-    _initial_pipeline = KPipeline(lang_code="i", repo_id="hexgrad/Kokoro-82M")
+# ── Pipeline Kokoro ──────────────────────────────────────────────────────────
+# Caricata in modo PIGRO: prima veniva creata all'avvio e occupava tempo e
+# memoria anche quando si usa solo il motore Edge.
+_initial_pipeline = None
 
 # ── Lingue / Motori / Voci ───────────────────────────────────────────────────
 _LANG_LABELS = {
@@ -209,45 +212,39 @@ for _eng_name, _table in (("Edge", _EDGE_VOICES), ("Kokoro", _KOKORO_VOICES)):
             _ALL_VOICES.append((f"{_lbl} · {_lname} · {_eng_name}", _vid))
 
 
-# Compatibilità con il resto del codice (default: Edge italiano)
-_VOICE_LIST = voices_for("edge", "it")
-
-# Pre-carica le voci Kokoro italiane all'avvio
-print("Pre-caricamento voci...", end=" ", flush=True)
-for _label, v in _KOKORO_VOICES["it"]:
-    try:
-        _initial_pipeline.load_voice(v)
-    except Exception as e:
-        print(f"\nAttenzione: impossibile caricare '{v}': {e}")
-print("OK!")
-print("Kokoro TTS pronto!")
-
 # ── Pipeline management (Kokoro, per lingua e device) ────────────────────────
 _pipelines: dict = {}
-if _initial_pipeline is not None:
-    _pipelines[("it", "cuda" if _has_cuda else "cpu")] = _initial_pipeline
+_pipeline_lock = threading.Lock()
 
 
 def get_pipeline(device: str = "auto", lang: str = "it"):
-    """Restituisce la pipeline Kokoro per lingua/device richiesti (con cache)."""
+    """Pipeline Kokoro per lingua/device, creata al primo uso (con cache).
+
+    Il lock evita che due richieste simultanee carichino il modello due volte.
+    """
     if device == "auto":
         device = "cuda" if _has_cuda else "cpu"
     key = (lang, device)
-    if key not in _pipelines:
-        print(f"Carico pipeline Kokoro lang={lang} device={device}...", flush=True)
+    with _pipeline_lock:
+        if key in _pipelines:
+            return _pipelines[key]
+        print(f"Carico Kokoro (lingua={lang}, {device}): prima volta, "
+              f"attendere...", flush=True)
         code = _LANG_CODES.get(lang) or "i"
         try:
-            p = KPipeline(lang_code=code, repo_id="hexgrad/Kokoro-82M", device=device)
+            p = KPipeline(lang_code=code, repo_id="hexgrad/Kokoro-82M",
+                          device=device)
         except TypeError:
             # KPipeline non supporta il parametro device
             p = KPipeline(lang_code=code, repo_id="hexgrad/Kokoro-82M")
         for _label, v in _KOKORO_VOICES.get(lang, []):
             try:
                 p.load_voice(v)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Attenzione: voce '{v}' non caricata: {e}")
         _pipelines[key] = p
-    return _pipelines[key]
+        print("Kokoro pronto.", flush=True)
+        return p
 
 # ── MoviePy + PIL ────────────────────────────────────────────────────────────
 from moviepy.video.VideoClip import VideoClip
@@ -455,61 +452,67 @@ def _build_srt(times: list, texts: list) -> str:
     return "\n".join(lines)
 
 # ── Draw frame with subtitles ────────────────────────────────────────────────
-def _draw_frame(
-    bg_img: Image.Image,
-    texts: list[str],
+def _wrap_text(txt: str, font, max_w: int) -> list:
+    """Manda a capo il testo usando la larghezza reale del font."""
+    lines: list[str] = []
+    current = ""
+    for w in txt.split():
+        test = (current + " " + w).strip()
+        bb = font.getbbox(test)
+        if bb and (bb[2] - bb[0]) < max_w:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = w
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _make_overlay(
+    texts: list,
     active_idx: int,
     W: int = VIDEO_W,
-    H: int = VIDEO_H,
     bar_h: int = BAR_H,
     font=None,
     font_size: int = 40,
     text_color: tuple = (255, 255, 255, 255),
     shadow_color: tuple = (0, 0, 0, 180),
     bar_color: tuple = (0, 0, 0, 160),
-) -> np.ndarray:
-    # Copia sfondo precomputato (molto più veloce di ridisegnare il gradiente)
+):
+    """Barra + sottotitolo di UNA frase, come layer RGBA.
+
+    Va calcolata una volta per frase (era il collo di bottiglia: prima il
+    wrapping del testo veniva ricalcolato a ogni singolo frame).
+    """
+    overlay = Image.new("RGBA", (W, bar_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay, "RGBA")
+    draw.rectangle([0, 0, W, bar_h], fill=bar_color)
+
+    if not (0 <= active_idx < len(texts)):
+        return overlay
+
+    lines = _wrap_text(texts[active_idx], font, W - 120)
+    line_h = int(font_size * 1.2)
+    y = (bar_h - len(lines) * line_h) // 2
+    for line in lines:
+        bb = font.getbbox(line)
+        tw = (bb[2] - bb[0]) if bb else 0
+        x = (W - tw) // 2
+        draw.text((x + 2, y + 2), line, font=font, fill=shadow_color)
+        draw.text((x, y), line, font=font, fill=text_color)
+        y += line_h
+    return overlay
+
+
+def _compose_frame(bg_img: Image.Image, overlay, H: int = VIDEO_H,
+                   bar_h: int = BAR_H) -> np.ndarray:
+    """Compone sfondo + overlay in un array numpy (una volta per frame)."""
     img = bg_img.copy()
-    draw2 = ImageDraw.Draw(img, "RGBA")
-
-    # Subtitle bar
-    bar = Image.new("RGBA", (W, bar_h), bar_color)
-    img.paste(bar, (0, H - bar_h), bar)
-
-    # Active sentence
-    if 0 <= active_idx < len(texts):
-        txt = texts[active_idx]
-        # Wrap long text
-        words = txt.split()
-        lines = []
-        current = ""
-        for w in words:
-            test = (current + " " + w).strip()
-            bb = font.getbbox(test)
-            if bb and (bb[2] - bb[0]) < W - 120:
-                current = test
-            else:
-                if current:
-                    lines.append(current)
-                current = w
-        if current:
-            lines.append(current)
-
-        # Centra verticalmente nella barra
-        line_h = int(font_size * 1.2)
-        total_h = len(lines) * line_h
-        y_start = H - bar_h + (bar_h - total_h) // 2
-
-        y = y_start
-        for line in lines:
-            bb = font.getbbox(line)
-            tw = (bb[2] - bb[0]) if bb else 0
-            x = (W - tw) // 2
-            draw2.text((x + 2, y + 2), line, font=font, fill=shadow_color)
-            draw2.text((x, y), line, font=font, fill=text_color)
-            y += line_h
-
-    return np.array(img)
+    if overlay is not None:
+        img.paste(overlay, (0, H - bar_h), overlay)
+    return np.asarray(img)
 
 # ── Audio helpers ────────────────────────────────────────────────────────────
 def _run_async(coro):
@@ -628,6 +631,7 @@ def synthesize(text: str, voice: str, speed: float, device: str, engine: str,
 # ── Traduzione: cascata Google -> NLLB -> MarianMT (tutto validato) ─────────
 _mt_cache: dict = {}
 _nllb_cache: dict = {}
+_mt_lock = threading.Lock()
 _google_ok: bool | None = None   # None = non ancora verificato
 
 # codici lingua NLLB-200
@@ -647,15 +651,16 @@ _NLLB_NAME = "facebook/nllb-200-distilled-600M"
 
 def _get_translator(src: str, tgt: str):
     key = (src, tgt)
-    if key not in _mt_cache:
-        from transformers import MarianMTModel, MarianTokenizer
-        name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
-        print(f"Carico modello di traduzione {name}...", flush=True)
-        tok = MarianTokenizer.from_pretrained(name)
-        model = MarianMTModel.from_pretrained(name)
-        model.eval()
-        _mt_cache[key] = (tok, model)
-    return _mt_cache[key]
+    with _mt_lock:
+        if key not in _mt_cache:
+            from transformers import MarianMTModel, MarianTokenizer
+            name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
+            print(f"Carico modello di traduzione {name}...", flush=True)
+            tok = MarianTokenizer.from_pretrained(name)
+            model = MarianMTModel.from_pretrained(name)
+            model.eval()
+            _mt_cache[key] = (tok, model)
+        return _mt_cache[key]
 
 
 def _looks_broken(out: str, src_text: str = "") -> bool:
@@ -713,13 +718,14 @@ def _translate_marian(sentences: list, src: str, tgt: str) -> list:
 
 
 def _get_nllb():
-    if "model" not in _nllb_cache:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        print(f"Carico modello di traduzione {_NLLB_NAME}...", flush=True)
-        _nllb_cache["tok"] = AutoTokenizer.from_pretrained(_NLLB_NAME)
-        _nllb_cache["model"] = AutoModelForSeq2SeqLM.from_pretrained(_NLLB_NAME)
-        _nllb_cache["model"].eval()
-    return _nllb_cache["tok"], _nllb_cache["model"]
+    with _mt_lock:
+        if "model" not in _nllb_cache:
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            print(f"Carico modello di traduzione {_NLLB_NAME}...", flush=True)
+            _nllb_cache["tok"] = AutoTokenizer.from_pretrained(_NLLB_NAME)
+            _nllb_cache["model"] = AutoModelForSeq2SeqLM.from_pretrained(_NLLB_NAME)
+            _nllb_cache["model"].eval()
+        return _nllb_cache["tok"], _nllb_cache["model"]
 
 
 def _translate_nllb(sentences: list, src: str, tgt: str) -> list:
@@ -962,10 +968,10 @@ def generate_video(
             )
 
         # --- Palette colore (fallback se no immagine) ---
-        if voice.startswith("if_sara"):
-            palette = [(20, 30, 50), (40, 60, 100)]   # blu
-        else:
-            palette = [(30, 40, 30), (50, 70, 50)]     # verde (Nicola)
+        # Scelta deterministica in base alla voce: risultato coerente e vario.
+        # (Prima esisteva un controllo solo su "if_sara", un residuo dell'era
+        #  in cui esisteva solo la voce italiana: tutto il resto era verde.)
+        palette = _GRADIENTS[sum(ord(c) for c in voice) % len(_GRADIENTS)]
 
         # Precomputa sfondo
         if bg_pil is not None:
@@ -983,18 +989,29 @@ def generate_video(
         # Ricerca attiva con bisect (O(log n) invece di O(n))
         starts = [st for st, _ in times]
 
+        # Cache dei layer: il sottotitolo viene composto UNA volta per frase
+        # invece che a ogni frame (circa 24 frame al secondo).
+        _overlay_cache: dict = {}
+        _OVERLAY_MAX = 48
+
+        def _get_overlay(idx):
+            ov = _overlay_cache.get(idx)
+            if ov is not None:
+                return ov
+            ov = _make_overlay(
+                texts, idx, font=font, font_size=sub_font_size,
+                text_color=text_color_rgba, bar_color=bar_color,
+            )
+            if len(_overlay_cache) >= _OVERLAY_MAX:
+                _overlay_cache.pop(next(iter(_overlay_cache)))
+            _overlay_cache[idx] = ov
+            return ov
+
         def make_frame(t):
             active = bisect.bisect_right(starts, t) - 1
-            if active < 0:
-                active = 0
-            if active >= len(times):
-                active = len(times) - 1
-            return _draw_frame(
-                bg_precomputed, texts, active,
-                font=font, font_size=sub_font_size,
-                text_color=text_color_rgba,
-                bar_color=bar_color,
-            )
+            if active < 0 or active >= len(times):
+                active = -1      # fuori intervallo: nessun sottotitolo
+            return _compose_frame(bg_precomputed, _get_overlay(active))
 
         # Scrivi WAV intermedio (int16, 24000 Hz)
         wav_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name

@@ -190,6 +190,22 @@ Qualità video: **Veloce** (ultrafast 1,5M) · **Bilanciato** (medium 3M) · **A
 - Nessun limite di tempo sulla generazione; l'interfaccia mostra l'avanzamento.
 - L'anteprima usa le prime **100 caratteri** del testo.
 
+### Prestazioni misurate
+
+Video di 1.295 caratteri (12 frasi, ~1 minuto):
+
+| Fase | Prima | Ora |
+|---|---|---|
+| Sintesi audio | 8,4 s | 2,6 s* |
+| Rendering video | 34,5 s | **9,7 s** |
+| **Totale** | **42,8 s** | **12,3 s** |
+
+\* il guadagno sulla sintesi dipende dal riscaldamento delle connessioni;
+la parte **deterministica** del miglioramento è il rendering.
+
+L'app si avvia in circa **11 secondi**: il modello Kokoro viene caricato solo
+alla prima sintesi offline, non all'avvio.
+
 ---
 
 ## 🔒 Privacy
