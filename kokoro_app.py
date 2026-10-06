@@ -849,6 +849,7 @@ def _get_translator(src: str, tgt: str):
             tok = MarianTokenizer.from_pretrained(name)
             model = MarianMTModel.from_pretrained(name)
             model.eval()
+            model.generation_config.max_length = None
             _mt_cache[key] = (tok, model)
         return _mt_cache[key]
 
@@ -915,6 +916,7 @@ def _get_nllb():
             _nllb_cache["tok"] = AutoTokenizer.from_pretrained(_NLLB_NAME)
             _nllb_cache["model"] = AutoModelForSeq2SeqLM.from_pretrained(_NLLB_NAME)
             _nllb_cache["model"].eval()
+            _nllb_cache["model"].generation_config.max_length = None
         return _nllb_cache["tok"], _nllb_cache["model"]
 
 
@@ -947,7 +949,8 @@ def _google_reachable() -> bool:
         except Exception:
             _google_ok = False
         if not _google_ok:
-            print("Google Translate non disponibile: uso MarianMT offline.", flush=True)
+            print("Google Translate non disponibile: uso NLLB-200 / MarianMT offline.",
+                  flush=True)
     return bool(_google_ok)
 
 
